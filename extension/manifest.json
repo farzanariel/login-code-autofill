@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Sign-in Code Autofill",
+  "version": "1.2.0",
+  "description": "Fills emailed sign-in codes from your Gmail via a local helper (helper/server.js). Never submits.",
+  "host_permissions": [
+    "http://127.0.0.1:7791/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
