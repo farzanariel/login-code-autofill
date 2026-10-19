@@ -7,8 +7,12 @@
   const CODE_HINT = /otp|code|verif|2fa|mfa|one.?time|passcode/i;
   // Boxes that say "code" but are not sign-in codes.
   const NOT_CODE = /zip|postal|post.?code|promo|coupon|gift|discount|voucher|referral|invite|card|cvc|cvv|area|country|phone/i;
+  // Links and buttons that mail a fresh code.
+  const RESEND = /resend|send (?:a )?(?:new|another) code|send (?:it )?again|new code/i;
   let running = false;
-  const handled = new WeakSet(); // each code box is tried once
+  let resentAt = 0; // when Resend was last clicked
+  const handled = new WeakSet(); // each code box is tried once, plus once per Resend
+  const used = new Set(); // codes already filled on this page, never filled twice
 
   const visible = (el) => el.offsetParent !== null && !el.disabled && !el.readOnly;
 
@@ -71,15 +75,23 @@
   const ask = (since) =>
     new Promise((resolve) => chrome.runtime.sendMessage({ type: 'login-code', site: location.hostname, since }, resolve));
 
+  // Anything in the box other than a code we filled means you typed it yourself.
+  const typedByHand = (targets) => {
+    const value = targets.map((el) => el.value).join('');
+    return Boolean(value) && !used.has(value);
+  };
+
   async function run(targets) {
     running = true;
-    const since = Date.now();
+    let since = Date.now();
     badge('Waiting for the code from Gmail…');
     while (Date.now() - since < GIVE_UP_MS) {
+      if (resentAt > since) since = resentAt; // a Resend restarts the wait
       if (targets.some((el) => !el.isConnected)) break; // page moved on
-      if (targets.map((el) => el.value).join('')) break; // you typed it yourself
+      if (typedByHand(targets)) break;
       const reply = await ask(since);
-      if (reply?.code) {
+      if (reply?.code && !used.has(reply.code)) {
+        used.add(reply.code);
         fill(targets, reply.code);
         badge('Code filled from Gmail', 'ok');
         running = false;
@@ -100,6 +112,21 @@
     targets.forEach((el) => handled.add(el));
     if (!targets.map((el) => el.value).join('')) run(targets);
   }
+
+  // Resend: wait for the new mail, even on a box that was already filled or gave up.
+  document.addEventListener(
+    'click',
+    (event) => {
+      const control = event.target.closest?.('button, a, [role="button"]');
+      if (!control || !RESEND.test(control.textContent || '')) return;
+      const targets = findTargets();
+      if (!targets.length) return;
+      resentAt = Date.now();
+      targets.forEach((el) => handled.add(el));
+      if (!running && !typedByHand(targets)) run(targets);
+    },
+    true,
+  );
 
   check();
   new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });

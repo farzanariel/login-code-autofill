@@ -1,6 +1,6 @@
 {
   "name": "login-code-autofill",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Chrome extension + local helper that types emailed sign-in codes from Gmail into the page.",
   "license": "MIT",
   "private": true,

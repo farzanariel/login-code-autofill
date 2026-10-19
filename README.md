@@ -28,6 +28,8 @@ page with a code box ──> extension content script ──> extension worker
 3. `helper/server.js` searches your inbox(es) for code-like subjects, pulls the
    digits out (`W-123456` becomes `123456`), and returns the newest one from the right sender.
 4. The extension fills the box and shows a small badge in the corner of the page.
+5. Clicking **Resend** (or "send a new code") starts a fresh wait and skips the code it already
+   filled, so the new code replaces the old one.
 
 The helper only listens on `127.0.0.1`, refuses requests carrying a website's
 `Origin`, and sends no CORS headers, so web pages cannot read codes from it.
@@ -76,7 +78,8 @@ The log is at `~/Library/Logs/login-code-autofill.log`. `npm run uninstall-agent
 
 Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**
 and pick the `extension/` folder. After pulling changes, click the reload icon
-on the extension and reload the sign-in page.
+on the extension and reload the sign-in page. Chrome does not add a newly
+loaded or reloaded extension to tabs that were already open.
 
 ## Sites that mail from another domain
 
