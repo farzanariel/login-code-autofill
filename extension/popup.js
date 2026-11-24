@@ -87,6 +87,17 @@
       $('site-label').textContent = `On ${host}`;
       siteSwitch($('site-on'), 'pausedSites', host, false);
       siteSwitch($('submit-on'), 'submitSites', host, true);
+      // The box pointed out with right-click > "Fill sign-in code here".
+      chrome.storage.local.get('boxes', ({ boxes = {} }) => {
+        $('box-row').hidden = !boxes[host];
+        $('box-forget').addEventListener('click', () =>
+          chrome.storage.local.get('boxes', ({ boxes: now = {} }) => {
+            delete now[host];
+            chrome.storage.local.set({ boxes: now });
+            $('box-row').hidden = true;
+          }),
+        );
+      });
     });
   }
 

@@ -24,6 +24,16 @@ function showPaused() {
   });
 }
 chrome.runtime.onInstalled.addListener(showPaused);
+
+// Right-click menu on any text box, for code boxes the extension did not
+// recognise. content.js knows which box was right-clicked.
+chrome.runtime.onInstalled.addListener(() =>
+  chrome.contextMenus.create({ id: 'login-code-fill', title: 'Fill sign-in code here', contexts: ['editable'] }, () => void chrome.runtime.lastError),
+);
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== 'login-code-fill' || tab?.id == null) return;
+  chrome.tabs.sendMessage(tab.id, { type: 'login-code-fill-here' }, { frameId: 0 }, () => void chrome.runtime.lastError);
+});
 chrome.runtime.onStartup.addListener(showPaused);
 chrome.storage.onChanged.addListener(showPaused);
 

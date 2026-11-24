@@ -79,8 +79,9 @@
       }
       button:hover { border-color: var(--muted); }
       button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-      label { display: flex; align-items: center; gap: 8px; min-height: 30px; cursor: pointer; }
-      label span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      label, .line { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+      label { cursor: pointer; }
+      label span, .line span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       input[type='checkbox'] { width: 16px; height: 16px; margin: 0; accent-color: var(--ok); }
       [hidden] { display: none !important; }
     </style>
@@ -94,6 +95,7 @@
     <label id="site-row" hidden><span id="site-label"></span><input type="checkbox" id="site-on" /></label>
     <label id="submit-row" hidden><span>Press Continue for me here</span><input type="checkbox" id="submit-on" /></label>
     <label><span>On all sites</span><input type="checkbox" id="all-on" /></label>
+    <div class="line" id="box-row" hidden><span>Code box remembered here</span><button type="button" id="box-forget">Forget</button></div>
 
     <div id="online" hidden>
       <h2>Codes from the last 10 minutes</h2>

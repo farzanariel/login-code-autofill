@@ -5,7 +5,13 @@
 // page with no code box it offers the emailed sign-in link instead; the link
 // only opens when you click the badge's button.
 (() => {
+  // Gmail is checked every second while the code is most likely to land, then every three.
+  const FAST_POLL_MS = 1000;
+  const FAST_FOR_MS = 20 * 1000;
   const POLL_MS = 3000;
+  const pause = (started) => new Promise((r) => setTimeout(r, Date.now() - started < FAST_FOR_MS ? FAST_POLL_MS : POLL_MS));
+  // "Fill sign-in code here" also takes a code that arrived up to this long ago.
+  const FILL_HERE_LOOK_BACK_MS = 5 * 60 * 1000;
   const GIVE_UP_MS = 150 * 1000;
   const CODE_HINT = /otp|code|verif|2fa|mfa|one.?time|passcode/i;
   // Boxes that say "code" but are not sign-in codes.
@@ -17,7 +23,12 @@
   const LINK_CHECKS = 40; // page-text looks per page load, so busy pages are not read forever
   // Wording of the button that sends the code off.
   const SUBMIT = /^\s*(?:continue|verify|submit|sign.?in|log.?in|confirm|next|done)\b/i;
+  // Boxes "Fill sign-in code here" will type into: text-like ones, never email, search and the like.
+  const FILLABLE = /^(text|tel|number|password|)$/;
+  const SPLIT_BOXES = 'input[maxlength="1"]'; // one box per digit
   let running = false;
+  let remembered = ''; // selector of the code box you pointed out on this site
+  let menuTarget = null; // what was last right-clicked
   let autoSubmit = false; // "Press Continue for me" is on for this site
   let paused = false; // switched off in the popup, for this site or everywhere
   let linkWatched = false; // the link wait runs once per page
@@ -44,7 +55,26 @@
       el.getAttribute('data-testid'),
     ].join(' ');
 
+  // A selector that finds this box again on a later visit, or '' when nothing about it is stable.
+  function selectorFor(el) {
+    if (el.maxLength === 1) return SPLIT_BOXES;
+    const by = (name) => (el.getAttribute(name) ? `input[${name}="${CSS.escape(el.getAttribute(name))}"]` : '');
+    return by('name') || by('data-testid') || by('data-automation-id') || by('aria-label') || by('placeholder') || by('id');
+  }
+
+  // The box you pointed out with "Fill sign-in code here" on an earlier visit.
+  function rememberedTargets() {
+    if (!remembered) return [];
+    let boxes = [];
+    try {
+      boxes = [...document.querySelectorAll(remembered)].filter((el) => visible(el) && FILLABLE.test(el.type));
+    } catch {}
+    return remembered === SPLIT_BOXES ? boxes : boxes.slice(0, 1);
+  }
+
   function findTargets() {
+    const pointedOut = rememberedTargets();
+    if (pointedOut.length) return pointedOut;
     const inputs = [...document.querySelectorAll('input')].filter(visible);
     const split = inputs.filter((el) => el.maxLength === 1 && /^(text|tel|number|)$/.test(el.type));
     if (split.length >= 4) return split;
@@ -209,7 +239,7 @@
         linkOffered = true; // the mail has a link but no code
         offerLink(reply);
       }
-      await new Promise((r) => setTimeout(r, POLL_MS));
+      await pause(started);
     }
     if (Date.now() - started >= GIVE_UP_MS) {
       if (!linkOffered) badge('No code arrived. Enter it by hand.', 'err');
@@ -235,7 +265,7 @@
       const reply = await ask(since);
       if (running || used.size) return;
       if (reply?.link) return offerLink(reply);
-      await new Promise((r) => setTimeout(r, POLL_MS));
+      await pause(since);
     }
     done();
   }
@@ -273,11 +303,38 @@
     true,
   );
 
+  // Right-click a box > "Fill sign-in code here": for a code box the extension
+  // did not recognise. Fills it now and remembers it for this site.
+  document.addEventListener('contextmenu', (event) => (menuTarget = event.target), true);
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type !== 'login-code-fill-here') return;
+    const box = menuTarget;
+    if (!(box instanceof HTMLInputElement) || !visible(box) || !FILLABLE.test(box.type)) {
+      return badge('That box cannot be filled. Right-click the code box itself.', 'err');
+    }
+    if (paused) return badge('Autofill is switched off for this site.', 'err');
+    if (running) return;
+    const selector = selectorFor(box);
+    if (selector) {
+      chrome.storage.local.get('boxes', ({ boxes = {} }) =>
+        chrome.storage.local.set({ boxes: { ...boxes, [location.hostname]: selector } }),
+      );
+    }
+    const targets = box.maxLength === 1 ? [...document.querySelectorAll(SPLIT_BOXES)].filter(visible) : [box];
+    targets.forEach((el) => {
+      handled.add(el);
+      setValue(el, '');
+    });
+    run(targets, Date.now() - FILL_HERE_LOOK_BACK_MS);
+  });
+
   // The popup's switches: off everywhere, or off for this site.
   function readPause(then) {
-    chrome.storage.local.get(['pausedAll', 'pausedSites', 'submitSites'], ({ pausedAll, pausedSites = [], submitSites = [] }) => {
+    const keys = ['pausedAll', 'pausedSites', 'submitSites', 'boxes'];
+    chrome.storage.local.get(keys, ({ pausedAll, pausedSites = [], submitSites = [], boxes = {} }) => {
       paused = Boolean(pausedAll) || pausedSites.includes(location.hostname);
       autoSubmit = submitSites.includes(location.hostname);
+      remembered = boxes[location.hostname] || '';
       then();
     });
   }

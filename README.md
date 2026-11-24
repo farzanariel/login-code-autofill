@@ -9,7 +9,7 @@ It only presses Continue for you on sites where you switch that on.
 - Sites that email a sign-in link instead get an **Open link** button in the badge.
   The link never opens by itself.
 - Reads Gmail **read-only**, and only while a code box or a "check your email"
-  page is open (about one search every 3 seconds, for at most 150 seconds).
+  page is open (one search a second for the first 20 seconds, then every 3, for at most 150 seconds).
 - Anti-phishing: a code or link is only handed to a site when the email came from
   the same company as the site's domain. `walmart.com` mail fills
   `seller.walmart.com`, but never `walmart-login.example.com`. Cloudflare Access
@@ -140,8 +140,10 @@ Cloudflare Access) are built into `helper/otp.js`.
 ## Troubleshooting
 
 - **No badge appears on the code screen:** the extension didn't recognise the box.
-  Open DevTools on the input and check its attributes. Sites with no useful
-  name, id, label or test id need a new hint in `findTargets()` in `extension/content.js`.
+  Right-click the box and choose **Fill sign-in code here**. It fills the newest
+  code from the last 5 minutes (or waits for one) and remembers that box, so the
+  site fills on its own next time. The popup shows "Code box remembered here" with
+  **Forget** to undo it. Boxes inside an embedded frame are not supported.
 - **Badge says "helper not running":** start it with `npm start` or `npm run install-agent`.
 - **Badge waits, then says no code arrived:** check the email reached a connected
   inbox and that its sender's domain matches the site (see `senders.json` above).
