@@ -1,6 +1,8 @@
 // Watches every site for a sign-in code box, asks the local helper (via
 // background.js) for the code that site's company just emailed, and types it
-// in. It never submits: you still click the button.
+// in. It never submits: you still click the button. On a "check your email"
+// page with no code box it offers the emailed sign-in link instead; the link
+// only opens when you click the badge's button.
 (() => {
   const POLL_MS = 3000;
   const GIVE_UP_MS = 150 * 1000;
@@ -9,7 +11,15 @@
   const NOT_CODE = /zip|postal|post.?code|promo|coupon|gift|discount|voucher|referral|invite|card|cvc|cvv|area|country|phone/i;
   // Links and buttons that mail a fresh code.
   const RESEND = /resend|send (?:a )?(?:new|another) code|send (?:it )?again|new code/i;
+  // Pages that mailed a sign-in link rather than a code.
+  const LINK_HINT = /check your (?:e-?mail|inbox)|(?:sent|emailed) you an? (?:magic |sign.?in |log.?in |login )?link|magic link/i;
+  const LINK_CHECKS = 40; // page-text looks per page load, so busy pages are not read forever
   let running = false;
+  let linkWatched = false; // the link wait runs once per page
+  let linkChecks = 0;
+  let linkTimer = 0;
+  let badgeTimer = 0;
+  let badgeRoot = null;
   let resentAt = 0; // when Resend was last clicked
   const handled = new WeakSet(); // each code box is tried once, plus once per Resend
   const used = new Set(); // codes already filled on this page, never filled twice
@@ -57,19 +67,57 @@
     targets[targets.length - 1].focus();
   }
 
-  function badge(text, tone) {
-    let el = document.getElementById('login-code-badge');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'login-code-badge';
-      el.style.cssText =
-        'position:fixed;bottom:16px;right:16px;z-index:2147483647;padding:8px 12px;border-radius:6px;' +
-        'font:13px -apple-system,system-ui,sans-serif;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)';
-      document.body.appendChild(el);
+  // The badge lives in a closed shadow root so the page cannot read what it says.
+  // `action` adds a button: { label, run }. Only a real click runs it, never one
+  // the page fakes, and not in the first moment after it appears under the cursor.
+  function badge(text, tone, action) {
+    let host = document.getElementById('login-code-badge');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'login-code-badge';
+      host.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483647';
+      badgeRoot = host.attachShadow({ mode: 'closed' });
+      document.body.appendChild(host);
     }
+    const el = document.createElement('div');
+    el.style.cssText =
+      'padding:8px 12px;border-radius:6px;font:13px -apple-system,system-ui,sans-serif;color:#fff;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.2)';
     el.style.background = tone === 'ok' ? '#1a7f37' : tone === 'err' ? '#cf222e' : '#444';
     el.textContent = text;
-    if (tone === 'ok') setTimeout(() => el.remove(), 4000);
+    badgeRoot.replaceChildren(el);
+    if (action) {
+      const shownAt = Date.now();
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = action.label;
+      button.style.cssText =
+        'margin-left:10px;padding:2px 8px;border:1px solid rgba(255,255,255,.6);border-radius:4px;' +
+        'background:transparent;color:#fff;font:inherit;cursor:pointer';
+      button.addEventListener('click', (event) => event.isTrusted && Date.now() - shownAt > 600 && action.run());
+      el.appendChild(button);
+    }
+    clearTimeout(badgeTimer);
+    if (tone === 'ok') badgeTimer = setTimeout(() => host.remove(), action ? 60000 : 4000);
+  }
+
+  // "cloudflare.com, 11:02 AM": which mail the code or link came from.
+  const source = (reply) =>
+    `${reply.from}, ${new Date(reply.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+
+  // A code mail came from a sender this site is not tied to: ask before using it.
+  function offerSender(sender) {
+    badge(`Code email from ${sender}. Use it for ${location.hostname}?`, 'wait', {
+      label: 'Always use',
+      run: () =>
+        chrome.runtime.sendMessage({ type: 'login-code-sender', site: location.hostname, sender }, (reply) =>
+          reply?.ok ? badge('Waiting for the code from Gmail…') : badge(`Code autofill: ${reply?.error || 'not saved'}`, 'err'),
+        ),
+    });
+  }
+
+  function offerLink(reply) {
+    badge(`Sign-in link from ${source(reply)}`, 'ok', { label: 'Open link', run: () => location.assign(reply.link) });
   }
 
   // Shared sign-in pages name the real site in their address: Cloudflare Access
@@ -85,7 +133,10 @@
 
   const ask = (since) =>
     new Promise((resolve) =>
-      chrome.runtime.sendMessage({ type: 'login-code', site: location.hostname, since, hosts: addressHosts() }, resolve),
+      chrome.runtime.sendMessage(
+        { type: 'login-code', site: location.hostname, since, hosts: addressHosts(), skip: [...used].join(',') },
+        resolve,
+      ),
     );
 
   // Anything in the box other than a code we filled means you typed it yourself.
@@ -94,34 +145,76 @@
     return Boolean(value) && !used.has(value);
   };
 
-  async function run(targets) {
+  // `since`: mail from this moment on counts. "Wrong code?" passes the first wait's start again.
+  async function run(targets, since = Date.now()) {
     running = true;
-    let since = Date.now();
+    let started = Date.now();
+    let linkOffered = false;
+    let senderOffered = '';
     badge('Waiting for the code from Gmail…');
-    while (Date.now() - since < GIVE_UP_MS) {
-      if (resentAt > since) since = resentAt; // a Resend restarts the wait
+    while (Date.now() - started < GIVE_UP_MS) {
+      if (resentAt > since) since = started = resentAt; // a Resend restarts the wait
       if (targets.some((el) => !el.isConnected)) break; // page moved on
       if (typedByHand(targets)) break;
       const reply = await ask(since);
       if (reply?.code && !used.has(reply.code)) {
         used.add(reply.code);
         fill(targets, reply.code);
-        badge('Code filled from Gmail', 'ok');
+        const codeSince = since;
+        badge(`Code from ${source(reply)}`, 'ok', { label: 'Wrong code?', run: () => tryAnother(targets, codeSince) });
         running = false;
         return;
       }
       if (reply?.error) badge(`Code autofill: ${reply.error}`, 'err');
+      else if (reply?.other && reply.other !== senderOffered) {
+        senderOffered = reply.other;
+        offerSender(reply.other);
+      } else if (reply?.link && !linkOffered && !senderOffered) {
+        linkOffered = true; // the mail has a link but no code
+        offerLink(reply);
+      }
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
-    if (Date.now() - since >= GIVE_UP_MS) badge('No code arrived. Enter it by hand.', 'err');
-    else document.getElementById('login-code-badge')?.remove();
+    if (Date.now() - started >= GIVE_UP_MS) {
+      if (!linkOffered) badge('No code arrived. Enter it by hand.', 'err');
+    } else document.getElementById('login-code-badge')?.remove();
     running = false;
+  }
+
+  // "Wrong code?": clear the box and fill the next matching code, or wait for a new one.
+  function tryAnother(targets, since) {
+    if (running) return;
+    targets.forEach((el) => setValue(el, ''));
+    run(targets, since);
+  }
+
+  // No code box: quietly wait for a sign-in link and offer it when it lands.
+  async function watchForLink() {
+    linkWatched = true;
+    const since = Date.now();
+    while (Date.now() - since < GIVE_UP_MS) {
+      if (running || used.size) return; // a code box showed up after all
+      const reply = await ask(since);
+      if (running || used.size) return;
+      if (reply?.link) return offerLink(reply);
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+  }
+
+  function checkForLinkPage() {
+    if (linkWatched || linkTimer || linkChecks >= LINK_CHECKS) return;
+    linkTimer = setTimeout(() => {
+      linkTimer = 0;
+      linkChecks += 1;
+      if (!running && !used.size && LINK_HINT.test((document.body?.innerText || '').slice(0, 20000))) watchForLink();
+    }, 1500);
   }
 
   function check() {
     if (running) return;
     const targets = findTargets();
-    if (!targets.length || handled.has(targets[0])) return;
+    if (!targets.length) return checkForLinkPage();
+    if (handled.has(targets[0])) return;
     targets.forEach((el) => handled.add(el));
     if (!targets.map((el) => el.value).join('')) run(targets);
   }

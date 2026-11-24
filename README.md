@@ -4,12 +4,16 @@ A Chrome extension plus a tiny local helper. When a site asks for the code it
 just emailed you, the code is typed into the box for you, straight from your Gmail.
 It never clicks Submit for you.
 
-- Works on any site that emails a code (Walmart Seller Center, Amazon, Feedvisor, ...).
-- Reads Gmail **read-only**, and only while a code box is open on the page
-  (about one search every 3 seconds, for at most 150 seconds).
-- Anti-phishing: a code is only handed to a site when the email came from the
-  same company as the site's domain. `walmart.com` mail fills
-  `seller.walmart.com`, but never `walmart-login.example.com`.
+- Works on any site that emails a code (Walmart Seller Center, Amazon, Feedvisor,
+  Cloudflare Access, ...).
+- Sites that email a sign-in link instead get an **Open link** button in the badge.
+  The link never opens by itself.
+- Reads Gmail **read-only**, and only while a code box or a "check your email"
+  page is open (about one search every 3 seconds, for at most 150 seconds).
+- Anti-phishing: a code or link is only handed to a site when the email came from
+  the same company as the site's domain. `walmart.com` mail fills
+  `seller.walmart.com`, but never `walmart-login.example.com`. Cloudflare Access
+  mail, which looks the same for every site, must also name the site you are on.
 - No dependencies. Node 18+ and Chrome.
 
 ## How it works
@@ -27,9 +31,16 @@ page with a code box ──> extension content script ──> extension worker
 2. It asks the helper for a code from mail received since the box appeared.
 3. `helper/server.js` searches your inbox(es) for code-like subjects, pulls the
    digits out (`W-123456` becomes `123456`), and returns the newest one from the right sender.
-4. The extension fills the box and shows a small badge in the corner of the page.
-5. Clicking **Resend** (or "send a new code") starts a fresh wait and skips the code it already
+4. The extension fills the box and shows a small badge in the corner of the page
+   saying where the code came from, e.g. "Code from cloudflare.com, 11:02 AM".
+5. If the site rejects the code, click **Wrong code?** on the badge (it stays for a minute):
+   the box is cleared and the next matching code is filled, or it waits for a new one.
+6. Clicking **Resend** (or "send a new code") starts a fresh wait and skips the code it already
    filled, so the new code replaces the old one.
+7. On a page that says "check your email" or "we sent you a link" and has no code box, the
+   extension waits quietly. When a mail from the site's company arrives with a sign-in link
+   on the site's own domain, the badge offers **Open link**. The same button appears on a
+   code page when the mail has a link but no code.
 
 The helper only listens on `127.0.0.1`, refuses requests carrying a website's
 `Origin`, and sends no CORS headers, so web pages cannot read codes from it.
@@ -84,13 +95,23 @@ loaded or reloaded extension to tabs that were already open.
 ## Sites that mail from another domain
 
 If a site's codes come from a different company domain than the site itself,
-add it to `SENDER_ALIASES` in `helper/otp.js`:
+the badge asks instead of filling: "Code email from example-mailer.com. Use it
+for example-site.com?" Click **Always use** and the code is filled, now and on
+every later sign-in. Check both names first: a look-alike site can make the real
+company email you a code, and this click is what would hand it over.
 
-```js
-const SENDER_ALIASES = {
-  'wal-mart.com': ['walmart.com'], // login.account.wal-mart.com, mail from walmart.com
-};
+The pairs are saved in `senders.json`, which you can also edit by hand
+(`senders.example.json` shows the format):
+
+```json
+{
+  "example-site.com": ["example-mailer.com"]
+}
 ```
+
+Saving the file is enough; the helper re-reads it without a restart. Delete a
+line to undo a pair. A few common pairs (Walmart,
+Cloudflare Access) are built into `helper/otp.js`.
 
 ## Troubleshooting
 
@@ -99,7 +120,7 @@ const SENDER_ALIASES = {
   name, id, label or test id need a new hint in `findTargets()` in `extension/content.js`.
 - **Badge says "helper not running":** start it with `npm start` or `npm run install-agent`.
 - **Badge waits, then says no code arrived:** check the email reached a connected
-  inbox and that its sender's domain matches the site (see aliases above).
+  inbox and that its sender's domain matches the site (see `senders.json` above).
   You can ask the helper directly:
 
   ```bash

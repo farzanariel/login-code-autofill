@@ -2,9 +2,14 @@
 
 // Local helper for the sign-in code autofill Chrome extension (../extension).
 // When a site shows a code box the extension asks
-//   GET http://127.0.0.1:7791/code?site=<hostname>&since=<ms>[&hosts=<hostnames in the page address>]
-// and gets { code } once a code mail from that site's company lands in one of
-// your Gmail inboxes.
+//   GET http://127.0.0.1:7791/code?site=<hostname>&since=<ms>
+//       [&hosts=<hostnames in the page address>][&skip=<codes already tried>]
+// and gets { code, link, from, at, other } once a mail from that site's company
+// lands in one of your Gmail inboxes: the code and/or sign-in link in it, the
+// sender's domain and when it arrived. `other` is the domain of a code mail
+// from a sender not tied to the site yet; when you click "Always use" the
+// extension saves the pair with
+//   POST http://127.0.0.1:7791/senders  { site, sender }
 //
 // Loopback only on purpose: it hands out live sign-in codes, so it must never
 // be reachable from the network. Requests labeled with a website's Origin are
@@ -14,8 +19,10 @@
 //   node helper/setup-agent.js      # run it always-on via launchd (macOS)
 
 const http = require('node:http');
-const { loadEnv, gmailClient, header, extractBody } = require('./gmail');
-const { otpMailQuery, extractCode, senderAddress, hostnamesIn, pickCode } = require('./otp');
+const { loadEnv, gmailClient, header, extractBody, extractLinks } = require('./gmail');
+const {
+  CODE_TTL_MS, otpMailQuery, extractCode, senderAddress, rootDomain, hostnamesIn, pickCode, pickLink, pickUnknownSender, addSender,
+} = require('./otp');
 
 loadEnv();
 const PORT = Number(process.env.LOGIN_CODE_PORT || 7791);
@@ -24,7 +31,7 @@ const MAILBOX_ENVS = (process.env.LOGIN_CODE_MAILBOXES || 'GMAIL_REFRESH_TOKEN')
   .split(',').map((k) => k.trim()).filter((k) => k && process.env[k]);
 const mailboxes = MAILBOX_ENVS.map((key) => ({ key, gmail: gmailClient(key) }));
 
-// "<mailbox>:<message id>" -> { code, at, sender, hosts }. A message never changes, so each is fetched once.
+// "<mailbox>:<message id>" -> { code, at, sender, hosts, links }. A message never changes, so each is fetched once.
 const seen = new Map();
 
 async function scanMailbox({ key, gmail }, sinceMs) {
@@ -33,13 +40,51 @@ async function scanMailbox({ key, gmail }, sinceMs) {
     if (seen.has(id)) continue;
     const message = await gmail.getMessage(stub.id);
     const text = `${header(message, 'Subject')}\n${extractBody(message)}`;
-    seen.set(id, { code: extractCode(text), at: Number(message.internalDate), sender: senderAddress(header(message, 'From')), hosts: hostnamesIn(text) });
+    seen.set(id, { code: extractCode(text), at: Number(message.internalDate), sender: senderAddress(header(message, 'From')), hosts: hostnamesIn(text), links: extractLinks(message) });
   }
 }
 
-async function latestCode(site, sinceMs, pageHosts) {
+async function latestMail(site, sinceMs, pageHosts, skip) {
   await Promise.all(mailboxes.map((mailbox) => scanMailbox(mailbox, sinceMs)));
-  return pickCode([...seen.values()], sinceMs, Date.now(), site, pageHosts);
+  const messages = [...seen.values()];
+  const withCode = pickCode(messages, sinceMs, Date.now(), site, pageHosts, skip);
+  const withLink = pickLink(messages, sinceMs, Date.now(), site, pageHosts);
+  const source = withCode || withLink;
+  return {
+    code: withCode ? withCode.code : null,
+    link: withLink ? withLink.link : null,
+    from: source ? rootDomain(source.sender) : null,
+    at: source ? source.at : null,
+    other: withCode ? null : rootDomain((pickUnknownSender(messages, sinceMs, Date.now(), site, pageHosts) || {}).sender),
+  };
+}
+
+/** Save site -> sender, but only for a sender whose code mail is sitting in the inbox right now. */
+function rememberSender(site, sender) {
+  const from = rootDomain(sender);
+  const mailed = [...seen.values()].some((m) => m.code && Date.now() - m.at < CODE_TTL_MS && rootDomain(m.sender) === from);
+  if (!site || !from || !mailed) return false;
+  addSender(site, from);
+  console.log(new Date().toISOString(), `sender added: ${rootDomain(site)} <- ${from}`);
+  return true;
+}
+
+function readJson(req) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 2000) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        resolve({});
+      }
+    });
+    req.on('close', () => resolve({}));
+  });
 }
 
 function send(res, status, body) {
@@ -57,13 +102,26 @@ const server = http.createServer(async (req, res) => {
     return send(res, 403, { error: 'forbidden' });
   }
   const url = new URL(req.url, `http://${host}`);
+  // POST only: a web page's POST always carries its Origin and was refused above.
+  if (req.method === 'POST' && url.pathname === '/senders') {
+    const { site, sender } = await readJson(req);
+    try {
+      return rememberSender(String(site || ''), String(sender || ''))
+        ? send(res, 200, { ok: true })
+        : send(res, 400, { error: 'no code mail from that sender' });
+    } catch (err) {
+      console.error(new Date().toISOString(), 'saving sender failed:', err.message);
+      return send(res, 500, { error: 'could not save senders.json' });
+    }
+  }
   if (req.method !== 'GET' || url.pathname !== '/code') return send(res, 404, { error: 'not found' });
   const site = url.searchParams.get('site') || '';
   if (!site) return send(res, 400, { error: 'site is required' });
   const since = Number(url.searchParams.get('since')) || Date.now();
   const pageHosts = hostnamesIn(url.searchParams.get('hosts'));
+  const skip = (url.searchParams.get('skip') || '').split(',').filter(Boolean);
   try {
-    send(res, 200, { code: await latestCode(site, since, pageHosts) });
+    send(res, 200, await latestMail(site, since, pageHosts, skip));
   } catch (err) {
     console.error(new Date().toISOString(), 'gmail lookup failed:', err.message);
     send(res, 502, { error: 'gmail lookup failed' });

@@ -85,14 +85,35 @@ function decodeB64Url(data) {
   return Buffer.from(String(data || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
 }
 
-/** Best-effort text body: text/plain if present, else tag-stripped text/html. */
-function extractBody(message) {
+/** Every decoded body part of a message as { mime, text }. */
+function bodyParts(message) {
   const parts = [];
   (function walk(node) {
     if (!node) return;
     if (node.body && node.body.data) parts.push({ mime: node.mimeType || '', text: decodeB64Url(node.body.data) });
     (node.parts || []).forEach(walk);
   })(message.payload);
+  return parts;
+}
+
+/** Links in a mail as { url, text }: HTML anchors with their wording, then bare URLs in the plain text. */
+function extractLinks(message) {
+  const links = [];
+  for (const part of bodyParts(message)) {
+    if (part.mime === 'text/html') {
+      for (const m of part.text.matchAll(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+        links.push({ url: m[1].replace(/&amp;/g, '&').trim(), text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() });
+      }
+    } else if (part.mime === 'text/plain') {
+      for (const m of part.text.matchAll(/https:\/\/[^\s<>"')\]]+/g)) links.push({ url: m[0], text: '' });
+    }
+  }
+  return links;
+}
+
+/** Best-effort text body: text/plain if present, else tag-stripped text/html. */
+function extractBody(message) {
+  const parts = bodyParts(message);
   const plain = parts.find((p) => p.mime === 'text/plain');
   if (plain) return plain.text;
   const html = parts.find((p) => p.mime === 'text/html');
@@ -110,4 +131,4 @@ function extractBody(message) {
   return decodeB64Url(message.payload && message.payload.body && message.payload.body.data);
 }
 
-module.exports = { ENV_FILE, loadEnv, gmailClient, header, extractBody };
+module.exports = { ENV_FILE, loadEnv, gmailClient, header, extractBody, extractLinks };
