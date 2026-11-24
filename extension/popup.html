@@ -45,6 +45,8 @@
         letter-spacing: 0.04em;
         text-transform: uppercase;
       }
+      h2.split { display: flex; align-items: center; justify-content: space-between; }
+      h2.split button { padding: 1px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
       .muted { color: var(--muted); }
       .status { display: flex; align-items: center; gap: 6px; }
       .dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--muted); }
@@ -90,17 +92,23 @@
 
     <h2>Autofill</h2>
     <label id="site-row" hidden><span id="site-label"></span><input type="checkbox" id="site-on" /></label>
+    <label id="submit-row" hidden><span>Press Continue for me here</span><input type="checkbox" id="submit-on" /></label>
     <label><span>On all sites</span><input type="checkbox" id="all-on" /></label>
 
     <div id="online" hidden>
-      <h2>Inboxes</h2>
-      <ul id="inboxes"></ul>
-
       <h2>Codes from the last 10 minutes</h2>
       <ul id="recent"><li class="muted">Checking Gmail…</li></ul>
 
+      <h2>Inboxes</h2>
+      <ul id="inboxes"></ul>
+
       <h2>Saved senders</h2>
       <ul id="senders"></ul>
+    </div>
+
+    <div id="history-block" hidden>
+      <h2 class="split">Sites <button type="button" id="history-clear">Clear</button></h2>
+      <ul id="history"></ul>
     </div>
     <script src="popup.js"></script>
   </body>

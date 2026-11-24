@@ -1,6 +1,7 @@
 // Watches every site for a sign-in code box, asks the local helper (via
 // background.js) for the code that site's company just emailed, and types it
-// in. It never submits: you still click the button. On a "check your email"
+// in. It does not submit unless you switched on "Press Continue for me" for
+// that site in the popup. On a "check your email"
 // page with no code box it offers the emailed sign-in link instead; the link
 // only opens when you click the badge's button.
 (() => {
@@ -14,7 +15,10 @@
   // Pages that mailed a sign-in link rather than a code.
   const LINK_HINT = /check your (?:e-?mail|inbox)|(?:sent|emailed) you an? (?:magic |sign.?in |log.?in |login )?link|magic link/i;
   const LINK_CHECKS = 40; // page-text looks per page load, so busy pages are not read forever
+  // Wording of the button that sends the code off.
+  const SUBMIT = /^\s*(?:continue|verify|submit|sign.?in|log.?in|confirm|next|done)\b/i;
   let running = false;
+  let autoSubmit = false; // "Press Continue for me" is on for this site
   let paused = false; // switched off in the popup, for this site or everywhere
   let linkWatched = false; // the link wait runs once per page
   let linkChecks = 0;
@@ -71,6 +75,29 @@
   // The badge lives in a closed shadow root so the page cannot read what it says.
   // `action` adds a button: { label, run }. Only a real click runs it, never one
   // the page fakes, and not in the first moment after it appears under the cursor.
+  // The button that sends the code: the form's submit button, else the nearest
+  // button around the box worded like Continue. Never Resend.
+  function findSubmit(box) {
+    const wording = (el) => el.textContent || el.value || '';
+    const usable = (el) => visible(el) && el.getAttribute('aria-disabled') !== 'true' && !RESEND.test(wording(el));
+    const typed = [...(box.form?.querySelectorAll('button[type="submit"], input[type="submit"]') || [])].find(usable);
+    if (typed) return typed;
+    for (let node = box.parentElement; node && node !== document.documentElement; node = node.parentElement) {
+      const found = [...node.querySelectorAll('button, input[type="submit"], [role="button"]')].find(
+        (el) => usable(el) && SUBMIT.test(wording(el)),
+      );
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // A moment after filling, so the site has enabled its button; not if the box changed meanwhile.
+  function pressContinue(targets, code) {
+    setTimeout(() => {
+      if (targets.every((el) => el.isConnected) && targets.map((el) => el.value).join('') === code) findSubmit(targets[0])?.click();
+    }, 500);
+  }
+
   function badge(text, tone, action) {
     let host = document.getElementById('login-code-badge');
     if (!host) {
@@ -140,8 +167,10 @@
       ),
     );
 
-  // Tells the worker the wait is over so the toolbar icon stops showing it.
-  const done = () => chrome.runtime.sendMessage({ type: 'login-code-done' }, () => void chrome.runtime.lastError);
+  // Notes for the worker: 'login-code-filled' and 'login-code-missed' go in the
+  // popup's site history, 'login-code-done' stops the toolbar icon's waiting mark.
+  const tell = (type, extra = {}) => chrome.runtime.sendMessage({ type, ...extra }, () => void chrome.runtime.lastError);
+  const done = () => tell('login-code-done');
 
   // Anything in the box other than a code we filled means you typed it yourself.
   const typedByHand = (targets) => {
@@ -167,6 +196,8 @@
         fill(targets, reply.code);
         const codeSince = since;
         badge(`Code from ${source(reply)}`, 'ok', { label: 'Wrong code?', run: () => tryAnother(targets, codeSince) });
+        tell('login-code-filled', { from: reply.from });
+        if (autoSubmit) pressContinue(targets, reply.code);
         running = false;
         return;
       }
@@ -182,6 +213,7 @@
     }
     if (Date.now() - started >= GIVE_UP_MS) {
       if (!linkOffered) badge('No code arrived. Enter it by hand.', 'err');
+      tell('login-code-missed');
     } else document.getElementById('login-code-badge')?.remove();
     running = false;
     done();
@@ -243,8 +275,9 @@
 
   // The popup's switches: off everywhere, or off for this site.
   function readPause(then) {
-    chrome.storage.local.get(['pausedAll', 'pausedSites'], ({ pausedAll, pausedSites = [] }) => {
+    chrome.storage.local.get(['pausedAll', 'pausedSites', 'submitSites'], ({ pausedAll, pausedSites = [], submitSites = [] }) => {
       paused = Boolean(pausedAll) || pausedSites.includes(location.hostname);
+      autoSubmit = submitSites.includes(location.hostname);
       then();
     });
   }

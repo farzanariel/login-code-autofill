@@ -2,7 +2,7 @@
 
 A Chrome extension plus a tiny local helper. When a site asks for the code it
 just emailed you, the code is typed into the box for you, straight from your Gmail.
-It never clicks Submit for you.
+It only presses Continue for you on sites where you switch that on.
 
 - Works on any site that emails a code (Walmart Seller Center, Amazon, Feedvisor,
   Cloudflare Access, ...).
@@ -52,6 +52,11 @@ Click the extension's icon (pin it from Chrome's puzzle-piece menu) to see:
 - **Status:** whether the helper is running and each connected inbox is readable.
 - **Autofill switches:** off for the site in the current tab, or off everywhere.
   While it is off everywhere the icon says "off".
+- **Press Continue for me here:** off by default. When on for a site, half a second
+  after filling the code the extension clicks that site's Continue / Verify / Sign in
+  button (never Resend). If it cannot find the button it does nothing.
+- **Sites:** where a code was filled, how often and when, and where one never
+  arrived. Kept in the extension only, codes are not stored, and **Clear** wipes it.
 - **Codes from the last 10 minutes:** every code or sign-in link that arrived, from
   any sender, with **Copy** or **Open link**. Useful when a site's code box is not
   recognised. Opening the window is the one time Gmail is searched without a code

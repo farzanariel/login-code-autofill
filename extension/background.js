@@ -27,7 +27,37 @@ chrome.runtime.onInstalled.addListener(showPaused);
 chrome.runtime.onStartup.addListener(showPaused);
 chrome.storage.onChanged.addListener(showPaused);
 
+// Site history for the popup: per hostname, how often a code was filled or
+// never arrived, and when. Codes themselves are not kept.
+function record(sender, msg) {
+  let host;
+  try {
+    host = new URL(sender.url).hostname;
+  } catch {
+    return;
+  }
+  chrome.storage.local.get('history', ({ history = {} }) => {
+    const entry = history[host] || { filled: 0, missed: 0 };
+    if (msg.type === 'login-code-filled') {
+      entry.filled += 1;
+      entry.lastFilled = Date.now();
+      entry.from = String(msg.from || '');
+    } else {
+      entry.missed += 1;
+      entry.lastMissed = Date.now();
+    }
+    history[host] = entry;
+    const last = (e) => Math.max(e.lastFilled || 0, e.lastMissed || 0);
+    const newest = Object.entries(history).sort((a, b) => last(b[1]) - last(a[1])).slice(0, 50);
+    chrome.storage.local.set({ history: Object.fromEntries(newest) });
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg?.type === 'login-code-filled' || msg?.type === 'login-code-missed') {
+    record(sender, msg);
+    return false;
+  }
   if (msg?.type === 'login-code-done') {
     mark(sender.tab, '');
     return false;
