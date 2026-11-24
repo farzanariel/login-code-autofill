@@ -14,6 +14,9 @@ It never clicks Submit for you.
   the same company as the site's domain. `walmart.com` mail fills
   `seller.walmart.com`, but never `walmart-login.example.com`. Cloudflare Access
   mail, which looks the same for every site, must also name the site you are on.
+- Click the extension's toolbar icon for a small window: helper and inbox status,
+  codes from the last 10 minutes with a Copy button, your saved senders, and
+  switches to turn autofill off for one site or everywhere.
 - No dependencies. Node 18+ and Chrome.
 
 ## How it works
@@ -41,6 +44,22 @@ page with a code box ──> extension content script ──> extension worker
    extension waits quietly. When a mail from the site's company arrives with a sign-in link
    on the site's own domain, the badge offers **Open link**. The same button appears on a
    code page when the mail has a link but no code.
+
+## The toolbar window
+
+Click the extension's icon (pin it from Chrome's puzzle-piece menu) to see:
+
+- **Status:** whether the helper is running and each connected inbox is readable.
+- **Autofill switches:** off for the site in the current tab, or off everywhere.
+  While it is off everywhere the icon says "off".
+- **Codes from the last 10 minutes:** every code or sign-in link that arrived, from
+  any sender, with **Copy** or **Open link**. Useful when a site's code box is not
+  recognised. Opening the window is the one time Gmail is searched without a code
+  box on the page.
+- **Saved senders:** the pairs you approved with **Always use**, each with **Remove**.
+
+The icon also carries a small mark for the current tab: `…` waiting on Gmail,
+`✓` code filled, `?` the badge is asking you something, `!` the helper is not running.
 
 The helper only listens on `127.0.0.1`, refuses requests carrying a website's
 `Origin`, and sends no CORS headers, so web pages cannot read codes from it.

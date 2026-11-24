@@ -146,6 +146,47 @@ function pickUnknownSender(messages, sinceMs, nowMs, siteHost, pageHosts = []) {
   );
 }
 
+/** Forget a pair saved in senders.json. */
+function removeSender(siteHost, sender) {
+  const site = rootDomain(siteHost);
+  const from = rootDomain(sender);
+  if (!fs.existsSync(SENDERS_FILE)) return;
+  const saved = JSON.parse(fs.readFileSync(SENDERS_FILE, 'utf8'));
+  for (const key of Object.keys(saved)) {
+    if (rootDomain(key) !== site) continue;
+    saved[key] = [].concat(saved[key]).filter((s) => rootDomain(s) !== from);
+    if (!saved[key].length) delete saved[key];
+  }
+  fs.writeFileSync(SENDERS_FILE, `${JSON.stringify(saved, null, 2)}\n`);
+  own.mtime = 0;
+}
+
+/** Sites a sender's mail can sign in to: its own domain plus every site it is paired with. */
+function sitesFor(sender) {
+  const from = rootDomain(sender);
+  const paired = (map) => Object.keys(map).filter((site) => map[site].includes(from));
+  return [from, ...paired(SENDER_ALIASES), ...paired(ownSenders())];
+}
+
+/**
+ * Unexpired codes and sign-in links for the extension's popup, newest first:
+ * [{ code, link, from, at }]. Not tied to a page, so it is only ever shown to
+ * you, never typed into a site.
+ */
+function recentMail(messages, nowMs, limit = 8) {
+  return messages
+    .filter((m) => m.at <= nowMs && nowMs - m.at < CODE_TTL_MS)
+    .sort((a, b) => b.at - a.at)
+    .map((m) => ({
+      code: m.code || null,
+      link: sitesFor(m.sender).map((site) => signInLink(m.links, site)).find(Boolean) || null,
+      from: rootDomain(m.sender),
+      at: m.at,
+    }))
+    .filter((r) => r.code || r.link)
+    .slice(0, limit);
+}
+
 /** Remember in senders.json that `sender`'s domain mails codes for `siteHost`. */
 function addSender(siteHost, sender) {
   const site = rootDomain(siteHost);
@@ -179,4 +220,7 @@ function pickLink(messages, sinceMs, nowMs, siteHost, pageHosts = []) {
   return null;
 }
 
-module.exports = { CODE_TTL_MS, otpMailQuery, extractCode, rootDomain, senderAddress, senderMatchesSite, hostnamesIn, signInLink, pickCode, pickLink, pickUnknownSender, addSender };
+module.exports = {
+  CODE_TTL_MS, otpMailQuery, extractCode, rootDomain, senderAddress, senderMatchesSite, hostnamesIn, signInLink,
+  pickCode, pickLink, pickUnknownSender, addSender, removeSender, ownSenders, recentMail,
+};

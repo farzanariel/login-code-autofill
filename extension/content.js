@@ -15,6 +15,7 @@
   const LINK_HINT = /check your (?:e-?mail|inbox)|(?:sent|emailed) you an? (?:magic |sign.?in |log.?in |login )?link|magic link/i;
   const LINK_CHECKS = 40; // page-text looks per page load, so busy pages are not read forever
   let running = false;
+  let paused = false; // switched off in the popup, for this site or everywhere
   let linkWatched = false; // the link wait runs once per page
   let linkChecks = 0;
   let linkTimer = 0;
@@ -139,6 +140,9 @@
       ),
     );
 
+  // Tells the worker the wait is over so the toolbar icon stops showing it.
+  const done = () => chrome.runtime.sendMessage({ type: 'login-code-done' }, () => void chrome.runtime.lastError);
+
   // Anything in the box other than a code we filled means you typed it yourself.
   const typedByHand = (targets) => {
     const value = targets.map((el) => el.value).join('');
@@ -153,6 +157,7 @@
     let senderOffered = '';
     badge('Waiting for the code from Gmail…');
     while (Date.now() - started < GIVE_UP_MS) {
+      if (paused) break;
       if (resentAt > since) since = started = resentAt; // a Resend restarts the wait
       if (targets.some((el) => !el.isConnected)) break; // page moved on
       if (typedByHand(targets)) break;
@@ -179,6 +184,7 @@
       if (!linkOffered) badge('No code arrived. Enter it by hand.', 'err');
     } else document.getElementById('login-code-badge')?.remove();
     running = false;
+    done();
   }
 
   // "Wrong code?": clear the box and fill the next matching code, or wait for a new one.
@@ -192,13 +198,14 @@
   async function watchForLink() {
     linkWatched = true;
     const since = Date.now();
-    while (Date.now() - since < GIVE_UP_MS) {
+    while (Date.now() - since < GIVE_UP_MS && !paused) {
       if (running || used.size) return; // a code box showed up after all
       const reply = await ask(since);
       if (running || used.size) return;
       if (reply?.link) return offerLink(reply);
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
+    done();
   }
 
   function checkForLinkPage() {
@@ -206,12 +213,12 @@
     linkTimer = setTimeout(() => {
       linkTimer = 0;
       linkChecks += 1;
-      if (!running && !used.size && LINK_HINT.test((document.body?.innerText || '').slice(0, 20000))) watchForLink();
+      if (!paused && !running && !used.size && LINK_HINT.test((document.body?.innerText || '').slice(0, 20000))) watchForLink();
     }, 1500);
   }
 
   function check() {
-    if (running) return;
+    if (running || paused) return;
     const targets = findTargets();
     if (!targets.length) return checkForLinkPage();
     if (handled.has(targets[0])) return;
@@ -224,7 +231,7 @@
     'click',
     (event) => {
       const control = event.target.closest?.('button, a, [role="button"]');
-      if (!control || !RESEND.test(control.textContent || '')) return;
+      if (paused || !control || !RESEND.test(control.textContent || '')) return;
       const targets = findTargets();
       if (!targets.length) return;
       resentAt = Date.now();
@@ -234,6 +241,17 @@
     true,
   );
 
-  check();
-  new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+  // The popup's switches: off everywhere, or off for this site.
+  function readPause(then) {
+    chrome.storage.local.get(['pausedAll', 'pausedSites'], ({ pausedAll, pausedSites = [] }) => {
+      paused = Boolean(pausedAll) || pausedSites.includes(location.hostname);
+      then();
+    });
+  }
+  chrome.storage.onChanged.addListener(() => readPause(check));
+
+  readPause(() => {
+    check();
+    new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+  });
 })();

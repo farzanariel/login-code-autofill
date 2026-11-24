@@ -72,6 +72,8 @@ function gmailClient(refreshTokenEnv) {
       return (await get(`/messages?${qs}`)).messages || [];
     },
     getMessage: (id) => get(`/messages/${id}?format=full`),
+    /** { emailAddress, ... } of the mailbox; also proves the token still works. */
+    profile: () => get('/profile'),
   };
 }
 

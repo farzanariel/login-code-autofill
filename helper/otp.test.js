@@ -192,3 +192,28 @@ test('addSender saves the pair so the code is picked from then on', () => {
   assert.throws(() => otp.addSender('a.com', 'b.com'));
   assert.equal(fs.readFileSync(sendersFile, 'utf8'), '{ nope');
 });
+
+test('removeSender forgets a saved pair', () => {
+  fs.writeFileSync(sendersFile, JSON.stringify({ 'newsite.com': ['new-mailer.net', 'second.com'], 'other.com': ['single.com'] }));
+  otp.removeSender('app.newsite.com', 'new-mailer.net');
+  otp.removeSender('other.com', 'x@single.com');
+  assert.deepEqual(JSON.parse(fs.readFileSync(sendersFile, 'utf8')), { 'newsite.com': ['second.com'] });
+  assert.deepEqual(otp.ownSenders(), { 'newsite.com': ['second.com'] });
+  assert.ok(!senderMatchesSite('codes@new-mailer.net', 'app.newsite.com'));
+});
+
+test('recentMail lists unexpired codes and sign-in links, newest first', () => {
+  const messages = [
+    { code: '111111', at: now - 700_000, sender: 'ops@feedvisor.com', links: [] },
+    { code: '222222', at: now - 60_000, sender: 'ops@feedvisor.com', links: [] },
+    { ...cloudflare(cloudflareMail, now - 5_000), links: [{ url: callback, text: 'Log in' }] },
+    { code: null, at: now - 1_000, sender: 'hi@example.com', links: [{ url: 'https://app.example.com/magic/abc', text: 'Sign in' }] },
+    { code: null, at: now - 500, sender: 'news@shop.com', links: [{ url: 'https://shop.com/sale', text: 'Shop now' }] },
+  ];
+  assert.deepEqual(otp.recentMail(messages, now), [
+    { code: null, link: 'https://app.example.com/magic/abc', from: 'example.com', at: now - 1_000 },
+    { code: '871673', link: callback, from: 'cloudflare.com', at: now - 5_000 },
+    { code: '222222', link: null, from: 'feedvisor.com', at: now - 60_000 },
+  ]);
+  assert.equal(otp.recentMail(messages, now, 1).length, 1);
+});

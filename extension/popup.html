@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign-in Code Autofill</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fff;
+        --text: #1f2328;
+        --muted: #656d76;
+        --line: #d8dee4;
+        --soft: #f6f8fa;
+        --ok: #1a7f37;
+        --err: #cf222e;
+        --accent: #0969da;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c2128;
+          --text: #e6edf3;
+          --muted: #8d96a0;
+          --line: #373e47;
+          --soft: #262c36;
+          --ok: #3fb950;
+          --err: #f85149;
+          --accent: #58a6ff;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 340px;
+        margin: 0;
+        padding: 14px 14px 6px;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.4 -apple-system, system-ui, sans-serif;
+      }
+      h1 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+      h2 {
+        margin: 16px 0 6px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .muted { color: var(--muted); }
+      .status { display: flex; align-items: center; gap: 6px; }
+      .dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--muted); }
+      .dot.ok { background: var(--ok); }
+      .dot.err { background: var(--err); }
+      .hint { margin: 6px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--soft); }
+      code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      ul { margin: 0; padding: 0; list-style: none; }
+      li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 6px 0;
+        border-top: 1px solid var(--line);
+      }
+      li:first-child { border-top: 0; }
+      .grow { flex: 1; min-width: 0; }
+      .grow > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .code { font: 600 17px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
+      button {
+        flex: none;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--soft);
+        color: var(--text);
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--muted); }
+      button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      label { display: flex; align-items: center; gap: 8px; min-height: 30px; cursor: pointer; }
+      label span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      input[type='checkbox'] { width: 16px; height: 16px; margin: 0; accent-color: var(--ok); }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <h1>Sign-in Code Autofill</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="status">Checking the helper…</span></div>
+    <p class="hint" id="hint" hidden></p>
+
+    <h2>Autofill</h2>
+    <label id="site-row" hidden><span id="site-label"></span><input type="checkbox" id="site-on" /></label>
+    <label><span>On all sites</span><input type="checkbox" id="all-on" /></label>
+
+    <div id="online" hidden>
+      <h2>Inboxes</h2>
+      <ul id="inboxes"></ul>
+
+      <h2>Codes from the last 10 minutes</h2>
+      <ul id="recent"><li class="muted">Checking Gmail…</li></ul>
+
+      <h2>Saved senders</h2>
+      <ul id="senders"></ul>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

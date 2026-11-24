@@ -11,6 +11,11 @@
 // extension saves the pair with
 //   POST http://127.0.0.1:7791/senders  { site, sender }
 //
+// The extension's popup (click its toolbar icon) also uses
+//   GET  /status          { mailboxes: [{ email, ok }], senders: { site: [sender] } }
+//   GET  /recent          { recent: [{ code, link, from, at }] } from the last 10 minutes
+//   POST /senders/remove  { site, sender }
+//
 // Loopback only on purpose: it hands out live sign-in codes, so it must never
 // be reachable from the network. Requests labeled with a website's Origin are
 // refused, and it sends no CORS headers, so web pages cannot read its replies.
@@ -22,6 +27,7 @@ const http = require('node:http');
 const { loadEnv, gmailClient, header, extractBody, extractLinks } = require('./gmail');
 const {
   CODE_TTL_MS, otpMailQuery, extractCode, senderAddress, rootDomain, hostnamesIn, pickCode, pickLink, pickUnknownSender, addSender,
+  removeSender, ownSenders, recentMail,
 } = require('./otp');
 
 loadEnv();
@@ -69,6 +75,27 @@ function rememberSender(site, sender) {
   return true;
 }
 
+/** Which inboxes are connected and still readable, plus your saved sender pairs. */
+async function status() {
+  const boxes = await Promise.all(
+    mailboxes.map(async (box) => {
+      try {
+        box.email = (await box.gmail.profile()).emailAddress;
+        return { email: box.email, ok: true };
+      } catch (err) {
+        console.error(new Date().toISOString(), `${box.key} check failed:`, err.message);
+        return { email: box.email || box.key, ok: false };
+      }
+    }),
+  );
+  return { mailboxes: boxes, senders: ownSenders() };
+}
+
+async function recent() {
+  await Promise.all(mailboxes.map((mailbox) => scanMailbox(mailbox, Date.now() - CODE_TTL_MS)));
+  return { recent: recentMail([...seen.values()], Date.now()) };
+}
+
 function readJson(req) {
   return new Promise((resolve) => {
     let body = '';
@@ -112,6 +139,24 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       console.error(new Date().toISOString(), 'saving sender failed:', err.message);
       return send(res, 500, { error: 'could not save senders.json' });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/senders/remove') {
+    const { site, sender } = await readJson(req);
+    try {
+      removeSender(String(site || ''), String(sender || ''));
+      return send(res, 200, { ok: true, senders: ownSenders() });
+    } catch (err) {
+      console.error(new Date().toISOString(), 'removing sender failed:', err.message);
+      return send(res, 500, { error: 'could not save senders.json' });
+    }
+  }
+  if (req.method === 'GET' && (url.pathname === '/status' || url.pathname === '/recent')) {
+    try {
+      return send(res, 200, await (url.pathname === '/status' ? status() : recent()));
+    } catch (err) {
+      console.error(new Date().toISOString(), 'gmail lookup failed:', err.message);
+      return send(res, 502, { error: 'gmail lookup failed' });
     }
   }
   if (req.method !== 'GET' || url.pathname !== '/code') return send(res, 404, { error: 'not found' });
