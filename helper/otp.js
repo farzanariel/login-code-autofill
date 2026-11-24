@@ -12,7 +12,14 @@ const SINCE_SLACK_MS = 60 * 1000;
 const SENDER_ALIASES = {
   // Seller Center signs in on login.account.wal-mart.com; codes come from walmart.com.
   'wal-mart.com': ['walmart.com'],
+  // Cloudflare Access asks for the code on <team>.cloudflareaccess.com.
+  'cloudflareaccess.com': ['cloudflare.com'],
 };
+
+// Senders that mail codes for many unrelated sites. Their mail only counts
+// when it names the site being signed in to (Cloudflare's subject reads
+// "Cloudflare Access login code for help.example.com").
+const SHARED_SENDERS = new Set(['cloudflare.com']);
 
 /** Gmail search for code mails received since `sinceMs` (minus slack). */
 function otpMailQuery(sinceMs) {
@@ -49,18 +56,34 @@ function senderMatchesSite(sender, siteHost) {
   return Boolean(site) && (from === site || (SENDER_ALIASES[site] || []).includes(from));
 }
 
-/** Newest unexpired code ({ code, at, sender }) from the site's company since `sinceMs`. */
-function pickCode(messages, sinceMs, nowMs, siteHost) {
+/** Hostnames written in a mail or a page address, lower-cased. */
+function hostnamesIn(text) {
+  return (String(text || '').toLowerCase().match(/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/g) || []);
+}
+
+/** A shared sender's mail must name the page's own host or one in its address (`pageHosts`). */
+function mailNamesSite(message, siteHost, pageHosts) {
+  if (!SHARED_SENDERS.has(rootDomain(message.sender))) return true;
+  const wanted = new Set([siteHost, ...pageHosts].map((h) => String(h).toLowerCase()));
+  return (message.hosts || []).some((h) => wanted.has(h));
+}
+
+/**
+ * Newest unexpired code ({ code, at, sender, hosts }) from the site's company
+ * since `sinceMs`. `pageHosts` are hostnames found in the page's address.
+ */
+function pickCode(messages, sinceMs, nowMs, siteHost, pageHosts = []) {
   const fresh = messages
     .filter(
       (m) =>
         m.code &&
         m.at >= sinceMs - SINCE_SLACK_MS &&
         nowMs - m.at < CODE_TTL_MS &&
-        senderMatchesSite(m.sender, siteHost),
+        senderMatchesSite(m.sender, siteHost) &&
+        mailNamesSite(m, siteHost, pageHosts),
     )
     .sort((a, b) => b.at - a.at);
   return fresh.length ? fresh[0].code : null;
 }
 
-module.exports = { CODE_TTL_MS, otpMailQuery, extractCode, rootDomain, senderAddress, senderMatchesSite, pickCode };
+module.exports = { CODE_TTL_MS, otpMailQuery, extractCode, rootDomain, senderAddress, senderMatchesSite, hostnamesIn, pickCode };

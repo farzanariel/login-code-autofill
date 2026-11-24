@@ -2,7 +2,7 @@
 
 // Local helper for the sign-in code autofill Chrome extension (../extension).
 // When a site shows a code box the extension asks
-//   GET http://127.0.0.1:7791/code?site=<hostname>&since=<ms>
+//   GET http://127.0.0.1:7791/code?site=<hostname>&since=<ms>[&hosts=<hostnames in the page address>]
 // and gets { code } once a code mail from that site's company lands in one of
 // your Gmail inboxes.
 //
@@ -15,7 +15,7 @@
 
 const http = require('node:http');
 const { loadEnv, gmailClient, header, extractBody } = require('./gmail');
-const { otpMailQuery, extractCode, senderAddress, pickCode } = require('./otp');
+const { otpMailQuery, extractCode, senderAddress, hostnamesIn, pickCode } = require('./otp');
 
 loadEnv();
 const PORT = Number(process.env.LOGIN_CODE_PORT || 7791);
@@ -24,7 +24,7 @@ const MAILBOX_ENVS = (process.env.LOGIN_CODE_MAILBOXES || 'GMAIL_REFRESH_TOKEN')
   .split(',').map((k) => k.trim()).filter((k) => k && process.env[k]);
 const mailboxes = MAILBOX_ENVS.map((key) => ({ key, gmail: gmailClient(key) }));
 
-// "<mailbox>:<message id>" -> { code, at, sender }. A message never changes, so each is fetched once.
+// "<mailbox>:<message id>" -> { code, at, sender, hosts }. A message never changes, so each is fetched once.
 const seen = new Map();
 
 async function scanMailbox({ key, gmail }, sinceMs) {
@@ -33,13 +33,13 @@ async function scanMailbox({ key, gmail }, sinceMs) {
     if (seen.has(id)) continue;
     const message = await gmail.getMessage(stub.id);
     const text = `${header(message, 'Subject')}\n${extractBody(message)}`;
-    seen.set(id, { code: extractCode(text), at: Number(message.internalDate), sender: senderAddress(header(message, 'From')) });
+    seen.set(id, { code: extractCode(text), at: Number(message.internalDate), sender: senderAddress(header(message, 'From')), hosts: hostnamesIn(text) });
   }
 }
 
-async function latestCode(site, sinceMs) {
+async function latestCode(site, sinceMs, pageHosts) {
   await Promise.all(mailboxes.map((mailbox) => scanMailbox(mailbox, sinceMs)));
-  return pickCode([...seen.values()], sinceMs, Date.now(), site);
+  return pickCode([...seen.values()], sinceMs, Date.now(), site, pageHosts);
 }
 
 function send(res, status, body) {
@@ -61,8 +61,9 @@ const server = http.createServer(async (req, res) => {
   const site = url.searchParams.get('site') || '';
   if (!site) return send(res, 400, { error: 'site is required' });
   const since = Number(url.searchParams.get('since')) || Date.now();
+  const pageHosts = hostnamesIn(url.searchParams.get('hosts'));
   try {
-    send(res, 200, { code: await latestCode(site, since) });
+    send(res, 200, { code: await latestCode(site, since, pageHosts) });
   } catch (err) {
     console.error(new Date().toISOString(), 'gmail lookup failed:', err.message);
     send(res, 502, { error: 'gmail lookup failed' });

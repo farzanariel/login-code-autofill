@@ -72,8 +72,21 @@
     if (tone === 'ok') setTimeout(() => el.remove(), 4000);
   }
 
+  // Shared sign-in pages name the real site in their address: Cloudflare Access
+  // is <team>.cloudflareaccess.com/cdn-cgi/access/login/<the site>. Only the
+  // hostnames are sent, never the rest of the address.
+  function addressHosts() {
+    let address = location.pathname + location.search;
+    try {
+      address = decodeURIComponent(address);
+    } catch {}
+    return [...new Set(address.toLowerCase().match(/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/g) || [])].slice(0, 10).join(',');
+  }
+
   const ask = (since) =>
-    new Promise((resolve) => chrome.runtime.sendMessage({ type: 'login-code', site: location.hostname, since }, resolve));
+    new Promise((resolve) =>
+      chrome.runtime.sendMessage({ type: 'login-code', site: location.hostname, since, hosts: addressHosts() }, resolve),
+    );
 
   // Anything in the box other than a code we filled means you typed it yourself.
   const typedByHand = (targets) => {

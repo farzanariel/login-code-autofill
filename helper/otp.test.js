@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { extractCode, pickCode, rootDomain, senderAddress, senderMatchesSite, otpMailQuery } = require('./otp');
+const { extractCode, pickCode, rootDomain, senderAddress, senderMatchesSite, hostnamesIn, otpMailQuery } = require('./otp');
 
 test('extractCode reads the Feedvisor mail body', () => {
   assert.equal(extractCode('Your code is: 482913\r\nIt expires in 300 seconds.\r\n'), '482913');
@@ -53,4 +53,31 @@ test('pickCode skips expired codes, codes from before this login, and other send
 
 test('otpMailQuery searches from a minute before the request', () => {
   assert.match(otpMailQuery(now), new RegExp(`^after:${(now - 60_000) / 1000} `));
+});
+
+// The Cloudflare Access mail: subject, then the plain-text body.
+const cloudflareMail = [
+  'Cloudflare Access login code for help.techrificdeals.com',
+  'Your Cloudflare Access code\n\n871673\n\nThis code expires after 10 minutes or if you request a new code.',
+  'Prefer not to use the code?\nFinish logging in to help.techrificdeals.com below.',
+  'https://wandering-sound-983c.cloudflareaccess.com/cdn-cgi/access/callback?nonce=abc&code=871673&secret=xyz',
+  'Copyright Cloudflare, Inc. 101 Townsend Street, San Francisco, CA 94107',
+].join('\n');
+const teamHost = 'wandering-sound-983c.cloudflareaccess.com';
+const cloudflare = (text, at) => ({ code: extractCode(text), at, sender: 'noreply@notify.cloudflare.com', hosts: hostnamesIn(text) });
+
+test('extractCode reads the Cloudflare Access mail', () => {
+  assert.equal(extractCode(cloudflareMail), '871673');
+  assert.ok(senderMatchesSite('noreply@notify.cloudflare.com', teamHost));
+});
+
+test('pickCode takes the Cloudflare code for the site in the page address, not another site', () => {
+  const other = cloudflareMail.replaceAll('help.techrificdeals.com', 'admin.example.com').replaceAll('871673', '555555').replace(teamHost, 'other-team.cloudflareaccess.com');
+  const messages = [cloudflare(cloudflareMail, now - 20_000), cloudflare(other, now - 5_000)];
+  assert.equal(pickCode(messages, now - 30_000, now, teamHost, ['help.techrificdeals.com']), '871673');
+  assert.equal(pickCode(messages, now - 30_000, now, 'other-team.cloudflareaccess.com', ['admin.example.com']), '555555');
+  // No site named in the address and a different team: nothing is filled.
+  assert.equal(pickCode(messages, now - 30_000, now, 'third-team.cloudflareaccess.com', []), null);
+  // A Cloudflare mail never fills a code box on an unrelated site.
+  assert.equal(pickCode(messages, now - 30_000, now, 'dash.cloudflare.com', []), null);
 });
